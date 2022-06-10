@@ -177,7 +177,7 @@ func (inst AllocateWithSeed) MarshalWithEncoder(encoder *ag_binary.Encoder) erro
 	}
 	// Serialize `Seed` param:
 	{
-		err := encoder.Encode(*inst.Seed)
+		err := encoder.WriteRustString(*inst.Seed)
 		if err != nil {
 			return err
 		}
@@ -209,10 +209,11 @@ func (inst *AllocateWithSeed) UnmarshalWithDecoder(decoder *ag_binary.Decoder) e
 	}
 	// Deserialize `Seed` param:
 	{
-		err := decoder.Decode(&inst.Seed)
+		value, err := decoder.ReadRustString()
 		if err != nil {
 			return err
 		}
+		inst.Seed = &value
 	}
 	// Deserialize `Space` param:
 	{

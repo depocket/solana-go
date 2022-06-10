@@ -2,9 +2,10 @@ module github.com/gagliardetto/solana-go
 
 go 1.16
 
-retract (
-	v1.0.1-beta.1 // Published accidentally.
-	v1.0.0 // Published accidentally.
+require (
+	github.com/gagliardetto/binary v0.6.1
+	github.com/gagliardetto/gofuzz v1.2.2
+	github.com/gagliardetto/treeout v0.1.4
 )
 
 require (
@@ -16,14 +17,11 @@ require (
 	github.com/buger/jsonparser v1.1.1
 	github.com/davecgh/go-spew v1.1.1
 	github.com/dfuse-io/logging v0.0.0-20210109005628-b97a57253f70
-	github.com/fatih/color v1.7.0
-	github.com/gagliardetto/binary v0.5.0
-	github.com/gagliardetto/gofuzz v1.2.2
-	github.com/gagliardetto/treeout v0.1.4
+	github.com/fatih/color v1.9.0
 	github.com/google/go-cmp v0.5.1
 	github.com/gorilla/rpc v1.2.0
 	github.com/gorilla/websocket v1.4.2
-	github.com/json-iterator/go v1.1.11
+	github.com/json-iterator/go v1.1.12
 	github.com/klauspost/compress v1.13.6
 	github.com/logrusorgru/aurora v2.0.3+incompatible
 	github.com/magiconair/properties v1.8.1
@@ -37,7 +35,6 @@ require (
 	github.com/spf13/viper v1.7.1
 	github.com/stretchr/testify v1.6.1
 	github.com/teris-io/shortid v0.0.0-20201117134242-e59966efd125 // indirect
-	github.com/tidwall/gjson v1.6.7 // indirect
 	go.opencensus.io v0.22.5 // indirect
 	go.uber.org/multierr v1.6.0 // indirect
 	go.uber.org/ratelimit v0.2.0

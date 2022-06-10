@@ -20,7 +20,7 @@ import (
 	"context"
 )
 
-// GetSlot returns the current slot the node is processing.
+// GetSlot returns the slot that has reached the given or default commitment level.
 func (cl *Client) GetSlot(
 	ctx context.Context,
 	commitment CommitmentType, // optional

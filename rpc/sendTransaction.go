@@ -29,11 +29,15 @@ func (cl *Client) SendTransaction(
 	ctx context.Context,
 	transaction *solana.Transaction,
 ) (signature solana.Signature, err error) {
+	opts := TransactionOpts{
+		SkipPreflight:       false,
+		PreflightCommitment: "",
+	}
+
 	return cl.SendTransactionWithOpts(
 		ctx,
 		transaction,
-		false,
-		"",
+		opts,
 	)
 }
 
@@ -65,30 +69,16 @@ func (cl *Client) SendTransaction(
 func (cl *Client) SendTransactionWithOpts(
 	ctx context.Context,
 	transaction *solana.Transaction,
-	skipPreflight bool, // if true, skip the preflight transaction checks (default: false)
-	preflightCommitment CommitmentType, // optional; Commitment level to use for preflight (default: "finalized").
+	opts TransactionOpts,
 ) (signature solana.Signature, err error) {
 	txData, err := transaction.MarshalBinary()
 	if err != nil {
 		return solana.Signature{}, fmt.Errorf("send transaction: encode transaction: %w", err)
 	}
 
-	obj := M{
-		"encoding": "base64",
-	}
-
-	if skipPreflight {
-		obj["skipPreflight"] = skipPreflight
-	}
-	if preflightCommitment != "" {
-		obj["preflightCommitment"] = preflightCommitment
-	}
-
-	params := []interface{}{
+	return cl.SendEncodedTransactionWithOpts(
+		ctx,
 		base64.StdEncoding.EncodeToString(txData),
-		obj,
-	}
-
-	err = cl.rpcClient.CallForInto(ctx, &signature, "sendTransaction", params)
-	return
+		opts,
+	)
 }

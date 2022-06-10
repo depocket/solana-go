@@ -14,13 +14,18 @@
 
 package token
 
-import ag_solanago "github.com/gagliardetto/solana-go"
+import (
+	"encoding/binary"
+
+	bin "github.com/gagliardetto/binary"
+	"github.com/gagliardetto/solana-go"
+)
 
 type Mint struct {
 	// Optional authority used to mint new tokens. The mint authority may only be provided during
 	// mint creation. If no mint authority is present then the mint has a fixed supply and no
 	// further tokens may be minted.
-	MintAuthority *ag_solanago.PublicKey `bin:"optional"`
+	MintAuthority *solana.PublicKey `bin:"optional"`
 
 	// Total supply of tokens.
 	Supply uint64
@@ -32,22 +37,139 @@ type Mint struct {
 	IsInitialized bool
 
 	// Optional authority to freeze token accounts.
-	FreezeAuthority *ag_solanago.PublicKey `bin:"optional"`
+	FreezeAuthority *solana.PublicKey `bin:"optional"`
+}
+
+func (mint *Mint) UnmarshalWithDecoder(dec *bin.Decoder) (err error) {
+	{
+		v, err := dec.ReadUint32(binary.LittleEndian)
+		if err != nil {
+			return err
+		}
+		if v == 1 {
+			v, err := dec.ReadNBytes(32)
+			if err != nil {
+				return err
+			}
+			mint.MintAuthority = solana.PublicKeyFromBytes(v).ToPointer()
+		} else {
+			// discard:
+			dec.ReadNBytes(32)
+		}
+	}
+	{
+		v, err := dec.ReadUint64(binary.LittleEndian)
+		if err != nil {
+			return err
+		}
+		mint.Supply = v
+	}
+	{
+		v, err := dec.ReadUint8()
+		if err != nil {
+			return err
+		}
+		mint.Decimals = v
+	}
+	{
+		v, err := dec.ReadBool()
+		if err != nil {
+			return err
+		}
+		mint.IsInitialized = v
+	}
+	{
+		v, err := dec.ReadUint32(binary.LittleEndian)
+		if err != nil {
+			return err
+		}
+		if v == 1 {
+			v, err := dec.ReadNBytes(32)
+			if err != nil {
+				return err
+			}
+			mint.FreezeAuthority = solana.PublicKeyFromBytes(v).ToPointer()
+		} else {
+			// discard:
+			dec.ReadNBytes(32)
+		}
+	}
+	return nil
+}
+
+func (mint Mint) MarshalWithEncoder(encoder *bin.Encoder) (err error) {
+	{
+		if mint.MintAuthority == nil {
+			err = encoder.WriteUint32(0, binary.LittleEndian)
+			if err != nil {
+				return err
+			}
+			empty := solana.PublicKey{}
+			err = encoder.WriteBytes(empty[:], false)
+			if err != nil {
+				return err
+			}
+		} else {
+			err = encoder.WriteUint32(1, binary.LittleEndian)
+			if err != nil {
+				return err
+			}
+			err = encoder.WriteBytes(mint.MintAuthority[:], false)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	err = encoder.WriteUint64(mint.Supply, binary.LittleEndian)
+	if err != nil {
+		return err
+	}
+	err = encoder.WriteUint8(mint.Decimals)
+	if err != nil {
+		return err
+	}
+	err = encoder.WriteBool(mint.IsInitialized)
+	if err != nil {
+		return err
+	}
+	{
+		if mint.FreezeAuthority == nil {
+			err = encoder.WriteUint32(0, binary.LittleEndian)
+			if err != nil {
+				return err
+			}
+			empty := solana.PublicKey{}
+			err = encoder.WriteBytes(empty[:], false)
+			if err != nil {
+				return err
+			}
+		} else {
+			err = encoder.WriteUint32(1, binary.LittleEndian)
+			if err != nil {
+				return err
+			}
+			err = encoder.WriteBytes(mint.FreezeAuthority[:], false)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 type Account struct {
 	// The mint associated with this account
-	Mint ag_solanago.PublicKey
+	Mint solana.PublicKey
 
 	// The owner of this account.
-	Owner ag_solanago.PublicKey
+	Owner solana.PublicKey
 
 	// The amount of tokens this account holds.
 	Amount uint64
 
 	// If `delegate` is `Some` then `delegated_amount` represents
 	// the amount authorized by the delegate
-	Delegate *ag_solanago.PublicKey `bin:"optional"`
+	Delegate *solana.PublicKey `bin:"optional"`
 
 	// The account's state
 	State AccountState
@@ -61,5 +183,200 @@ type Account struct {
 	DelegatedAmount uint64
 
 	// Optional authority to close the account.
-	CloseAuthority *ag_solanago.PublicKey `bin:"optional"`
+	CloseAuthority *solana.PublicKey `bin:"optional"`
+}
+
+func (mint *Account) UnmarshalWithDecoder(dec *bin.Decoder) (err error) {
+	{
+		v, err := dec.ReadNBytes(32)
+		if err != nil {
+			return err
+		}
+		mint.Mint = solana.PublicKeyFromBytes(v)
+	}
+	{
+		v, err := dec.ReadNBytes(32)
+		if err != nil {
+			return err
+		}
+		mint.Owner = solana.PublicKeyFromBytes(v)
+	}
+	{
+		v, err := dec.ReadUint64(binary.LittleEndian)
+		if err != nil {
+			return err
+		}
+		mint.Amount = v
+	}
+	{
+		v, err := dec.ReadUint32(binary.LittleEndian)
+		if err != nil {
+			return err
+		}
+		if v == 1 {
+			v, err := dec.ReadNBytes(32)
+			if err != nil {
+				return err
+			}
+			mint.Delegate = solana.PublicKeyFromBytes(v).ToPointer()
+		} else {
+			// discard:
+			dec.ReadNBytes(32)
+		}
+	}
+	{
+		v, err := dec.ReadUint8()
+		if err != nil {
+			return err
+		}
+		mint.State = AccountState(v)
+	}
+	{
+		v, err := dec.ReadUint32(binary.LittleEndian)
+		if err != nil {
+			return err
+		}
+		if v == 1 {
+			v, err := dec.ReadUint64(bin.LE)
+			if err != nil {
+				return err
+			}
+			mint.IsNative = &v
+		} else {
+			// discard:
+			dec.ReadUint64(bin.LE)
+		}
+	}
+	{
+		v, err := dec.ReadUint64(binary.LittleEndian)
+		if err != nil {
+			return err
+		}
+		mint.DelegatedAmount = v
+	}
+	{
+		v, err := dec.ReadUint32(binary.LittleEndian)
+		if err != nil {
+			return err
+		}
+		if v == 1 {
+			v, err := dec.ReadNBytes(32)
+			if err != nil {
+				return err
+			}
+			mint.CloseAuthority = solana.PublicKeyFromBytes(v).ToPointer()
+		} else {
+			// discard:
+			dec.ReadNBytes(32)
+		}
+	}
+	return nil
+}
+
+func (mint Account) MarshalWithEncoder(encoder *bin.Encoder) (err error) {
+	{
+		err = encoder.WriteBytes(mint.Mint[:], false)
+		if err != nil {
+			return err
+		}
+	}
+	{
+		err = encoder.WriteBytes(mint.Owner[:], false)
+		if err != nil {
+			return err
+		}
+	}
+	{
+		err = encoder.WriteUint64(mint.Amount, bin.LE)
+		if err != nil {
+			return err
+		}
+	}
+	{
+		if mint.Delegate == nil {
+			err = encoder.WriteUint32(0, binary.LittleEndian)
+			if err != nil {
+				return err
+			}
+			empty := solana.PublicKey{}
+			err = encoder.WriteBytes(empty[:], false)
+			if err != nil {
+				return err
+			}
+		} else {
+			err = encoder.WriteUint32(1, binary.LittleEndian)
+			if err != nil {
+				return err
+			}
+			err = encoder.WriteBytes(mint.Delegate[:], false)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	err = encoder.WriteUint8(uint8(mint.State))
+	if err != nil {
+		return err
+	}
+	{
+		if mint.IsNative == nil {
+			err = encoder.WriteUint32(0, binary.LittleEndian)
+			if err != nil {
+				return err
+			}
+			err = encoder.WriteUint64(0, bin.LE)
+			if err != nil {
+				return err
+			}
+		} else {
+			err = encoder.WriteUint32(1, binary.LittleEndian)
+			if err != nil {
+				return err
+			}
+			err = encoder.WriteUint64(*mint.IsNative, bin.LE)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	{
+		err = encoder.WriteUint64(mint.DelegatedAmount, bin.LE)
+		if err != nil {
+			return err
+		}
+	}
+	{
+		if mint.CloseAuthority == nil {
+			err = encoder.WriteUint32(0, binary.LittleEndian)
+			if err != nil {
+				return err
+			}
+			empty := solana.PublicKey{}
+			err = encoder.WriteBytes(empty[:], false)
+			if err != nil {
+				return err
+			}
+		} else {
+			err = encoder.WriteUint32(1, binary.LittleEndian)
+			if err != nil {
+				return err
+			}
+			err = encoder.WriteBytes(mint.CloseAuthority[:], false)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+type Multisig struct {
+	// Number of signers required
+	M uint8
+	// Number of valid signers
+	N uint8
+	// Is `true` if this structure has been initialized
+	IsInitialized bool
+	// Signer public keys
+	Signers [MAX_SIGNERS]solana.PublicKey
 }

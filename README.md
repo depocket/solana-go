@@ -1,6 +1,6 @@
 # Solana SDK library for Go
 
-[![GoDoc](https://pkg.go.dev/badge/github.com/gagliardetto/solana-go?status.svg)](https://pkg.go.dev/github.com/gagliardetto/solana-go@v1.0.2?tab=doc)
+[![GoDoc](https://pkg.go.dev/badge/github.com/gagliardetto/solana-go?status.svg)](https://pkg.go.dev/github.com/gagliardetto/solana-go@v1.4.0?tab=doc)
 [![GitHub tag (latest SemVer pre-release)](https://img.shields.io/github/v/tag/gagliardetto/solana-go?include_prereleases&label=release-tag)](https://github.com/gagliardetto/solana-go/releases)
 [![Build Status](https://github.com/gagliardetto/solana-go/workflows/tests/badge.svg?branch=main)](https://github.com/gagliardetto/solana-go/actions?query=branch%3Amain)
 [![TODOs](https://badgen.net/https/api.tickgit.com/badgen/github.com/gagliardetto/solana-go/main)](https://www.tickgit.com/browse?repo=github.com/gagliardetto/solana-go&branch=main)
@@ -8,9 +8,11 @@
 
 Go library to interface with Solana JSON RPC and WebSocket interfaces.
 
-Clients for Solana native programs, Solana Program Library (SPL), and [Serum DEX](https://dex.projectserum.com) are in development.
-
 More contracts to come.
+
+**If you're using/developing Solana programs written in [Anchor Framework](https://github.com/project-serum/anchor), you can use [anchor-go](https://github.com/gagliardetto/anchor-go) to generate Golang clients**
+
+**If you're looking for a SERUM library, you can check out [gagliardetto/serum-go](https://github.com/gagliardetto/serum-go) ; [/programs/serum](https://github.com/gagliardetto/solana-go/tree/main/programs/serum) is deprecated.**
 
 <div align="center">
     <img src="https://user-images.githubusercontent.com/15271561/128235229-1d2d9116-23bb-464e-b2cc-8fb6355e3b55.png" margin="auto" height="175"/>
@@ -26,10 +28,13 @@ More contracts to come.
   - [Installation](#installation)
   - [Pretty-Print transactions/instructions](#pretty-print-transactionsinstructions)
   - [SendAndConfirmTransaction](#sendandconfirmtransaction)
+  - [Decode an instruction data](#parsedecode-an-instruction-from-a-transaction)
   - [Borsh encoding/decoding](#borsh-encodingdecoding)
+  - [ZSTD encoding](#zstd-account-data-encoding)
+  - [Timeouts and Custom HTTP Clients](#timeouts-and-custom-http-clients)
   - [Examples](#examples)
     - [Create Account/Wallet](#create-account-wallet)
-    - [Load/parse keys](#loadparse-private-and-private-keys)
+    - [Load/parse keys](#loadparse-private-and-public-keys)
     - [Transfer SOL from a wallet to another](#transfer-sol-from-one-wallet-to-another-wallet)
     - [RPC (index)](#rpc-usage-examples)
       - [RPC examples](#rpc-methods)
@@ -48,7 +53,7 @@ More contracts to come.
   - [ ] config
   - [ ] stake
   - [ ] vote
-  - [ ] BPF Loader
+  - [x] BPF Loader
   - [ ] Secp256k1
 - [ ] Clients for Solana Program Library (SPL)
   - [x] [SPL token](/programs/token)
@@ -67,9 +72,15 @@ More contracts to come.
 
 ## Current development status
 
-There is currently **no stable release**. The SDK is actively developed and latest is `v1.0.2` which is an `alpha` release.
+There is currently **no stable release**. The SDK is actively developed and latest is `v1.4.0` which is an `alpha` release.
 
-The RPC and WS client implementation is based on [this RPC spec](https://github.com/solana-labs/solana/blob/dff9c88193da142693cabebfcd3bf68fa8e8b873/docs/src/developing/clients/jsonrpc-api.md).
+The RPC and WS client implementation is based on [this RPC spec](https://github.com/solana-labs/solana/blob/c2435363f39723cef59b91322f3b6a815008af29/docs/src/developing/clients/jsonrpc-api.md).
+
+Note
+----
+
+- solana-go is in active development, so all APIs are subject to change.
+- This code is unaudited. Use at your own risk.
 
 ## Requirements
 
@@ -79,14 +90,14 @@ The RPC and WS client implementation is based on [this RPC spec](https://github.
 
 ```bash
 $ cd my-project
-$ go get github.com/gagliardetto/solana-go@v1.0.2
+$ go get github.com/gagliardetto/solana-go@v1.4.0
 ```
 
 ## Pretty-Print transactions/instructions
 
 ![pretty-printed](https://user-images.githubusercontent.com/15271561/136708519-399c9498-3d20-48d6-89fa-bdf43aac6d83.png)
 
-Instructions can be pretty-printed with the `EncodeTree` method on a `Transaction`:
+Instructions can be pretty-printed with the `String()` method on a `Transaction`:
 
 ```go
 tx, err := solana.NewTransaction(
@@ -104,7 +115,9 @@ tx, err := solana.NewTransaction(
 ...
 
 // Pretty print the transaction:
-tx.EncodeTree(text.NewTreeEncoder(os.Stdout, "Transfer SOL"))
+fmt.Println(tx.String())
+// OR you can choose a destination and a title:
+// tx.EncodeTree(text.NewTreeEncoder(os.Stdout, "Transfer SOL"))
 ```
 
 ## SendAndConfirmTransaction
@@ -127,6 +140,125 @@ spew.Dump(sig)
 
 The above command will send the transaction, and wait for its confirmation.
 
+## Parse/decode an instruction from a transaction
+
+```go
+package main
+
+import (
+  "context"
+  "encoding/base64"
+  "os"
+  "reflect"
+
+  "github.com/davecgh/go-spew/spew"
+  bin "github.com/gagliardetto/binary"
+  "github.com/gagliardetto/solana-go"
+  "github.com/gagliardetto/solana-go/programs/system"
+  "github.com/gagliardetto/solana-go/rpc"
+  "github.com/gagliardetto/solana-go/text"
+)
+
+func main() {
+  exampleFromGetTransaction()
+}
+
+func exampleFromBase64() {
+  encoded := "AfjEs3XhTc3hrxEvlnMPkm/cocvAUbFNbCl00qKnrFue6J53AhEqIFmcJJlJW3EDP5RmcMz+cNTTcZHW/WJYwAcBAAEDO8hh4VddzfcO5jbCt95jryl6y8ff65UcgukHNLWH+UQGgxCGGpgyfQVQV02EQYqm4QwzUt2qf9f1gVLM7rI4hwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA6ANIF55zOZWROWRkeh+lExxZBnKFqbvIxZDLE7EijjoBAgIAAQwCAAAAOTAAAAAAAAA="
+
+  data, err := base64.StdEncoding.DecodeString(encoded)
+  if err != nil {
+    panic(err)
+  }
+
+  // parse transaction:
+  tx, err := solana.TransactionFromDecoder(bin.NewBinDecoder(data))
+  if err != nil {
+    panic(err)
+  }
+
+  decodeSystemTransfer(tx)
+}
+
+func exampleFromGetTransaction() {
+  endpoint := rpc.TestNet_RPC
+  client := rpc.New(endpoint)
+
+  txSig := solana.MustSignatureFromBase58("3pByJJ2ff7EQANKd2bgetmnYQxknk3QUib1xLMnrg6aCvg5hS78peaGMoceC9AFckomqrsgo38DpzrG2LPW9zj3g")
+  {
+    out, err := client.GetTransaction(
+      context.TODO(),
+      txSig,
+      &rpc.GetTransactionOpts{
+        Encoding: solana.EncodingBase64,
+      },
+    )
+    if err != nil {
+      panic(err)
+    }
+
+    tx, err := solana.TransactionFromDecoder(bin.NewBinDecoder(out.Transaction.GetBinary()))
+    if err != nil {
+      panic(err)
+    }
+
+    decodeSystemTransfer(tx)
+  }
+}
+
+func decodeSystemTransfer(tx *solana.Transaction) {
+  spew.Dump(tx)
+
+  // we know that the first instruction of the transaction is a `system` program instruction:
+  i0 := tx.Message.Instructions[0]
+
+  // parse a system program instruction:
+  inst, err := system.DecodeInstruction(i0.ResolveInstructionAccounts(&tx.Message), i0.Data)
+  if err != nil {
+    panic(err)
+  }
+  // inst.Impl contains the specific instruction type (in this case, `inst.Impl` is a `*system.Transfer`)
+  spew.Dump(inst)
+  if _, ok := inst.Impl.(*system.Transfer); !ok {
+    panic("the instruction is not a *system.Transfer")
+  }
+
+  // OR
+  {
+    // There is a more general instruction decoder: `solana.DecodeInstruction`.
+    // But before you can use `solana.DecodeInstruction`,
+    // you must register a decoder for each program ID beforehand
+    // by using `solana.RegisterInstructionDecoder` (all solana-go program clients do it automatically with the default program IDs).
+    decodedInstruction, err := solana.DecodeInstruction(
+      system.ProgramID,
+      i0.ResolveInstructionAccounts(&tx.Message),
+      i0.Data,
+    )
+    if err != nil {
+      panic(err)
+    }
+    spew.Dump(decodedInstruction)
+
+    // decodedInstruction == inst
+    if !reflect.DeepEqual(inst, decodedInstruction) {
+      panic("they are NOT equal (this would never happen)")
+    }
+
+    // To register other (not yet registered decoders), you can add them with
+    // `solana.RegisterInstructionDecoder` function.
+  }
+
+  {
+    // pretty-print whole transaction:
+    _, err := tx.EncodeTree(text.NewTreeEncoder(os.Stdout, text.Bold("TEST TRANSACTION")))
+    if err != nil {
+      panic(err)
+    }
+  }
+}
+
+``` 
+
 ## Borsh encoding/decoding
 
 You can use the `github.com/gagliardetto/binary` package for encoding/decoding borsh-encoded data:
@@ -141,7 +273,7 @@ Decoder:
   if err != nil {
     panic(err)
   }
- 
+
   borshDec := bin.NewBorshDecoder(resp.Value.Data.GetBinary())
   var meta token_metadata.Metadata
   err = borshDec.Decode(&meta)
@@ -160,6 +292,115 @@ if err != nil {
   panic(err)
 }
 // fmt.Print(buf.Bytes())
+```
+
+## ZSTD account data encoding
+
+You can request account data to be encoded with base64+zstd in the `Encoding` parameter:
+
+```go
+resp, err := client.GetAccountInfoWithOpts(
+  context.TODO(),
+  pubKey,
+  &rpc.GetAccountInfoOpts{
+    Encoding:   solana.EncodingBase64Zstd,
+    Commitment: rpc.CommitmentFinalized,
+  },
+)
+if err != nil {
+  panic(err)
+}
+spew.Dump(resp)
+
+var mint token.Mint
+err = bin.NewDecoder(resp.Value.Data.GetBinary()).Decode(&mint)
+if err != nil {
+  panic(err)
+}
+spew.Dump(mint)
+```
+
+The data will **AUTOMATICALLY get decoded** and returned (**the right decoder will be used**) when you call the `resp.Value.Data.GetBinary()` method.
+
+## Timeouts and Custom HTTP Clients
+
+You can use a timeout context:
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
+defer cancel()
+acc, err := rpcClient.GetAccountInfoWithOpts(
+  ctx,
+  accountID,
+  &rpc.GetAccountInfoOpts{
+    Commitment: rpc.CommitmentProcessed,
+  },
+)
+```
+
+Or you can initialize the RPC client using a custom HTTP client using `rpc.NewWithCustomRPCClient`:
+
+```go
+import (
+  "net"
+  "net/http"
+  "time"
+
+  "github.com/gagliardetto/solana-go/rpc"
+  "github.com/gagliardetto/solana-go/rpc/jsonrpc"
+)
+
+func NewHTTPTransport(
+  timeout time.Duration,
+  maxIdleConnsPerHost int,
+  keepAlive time.Duration,
+) *http.Transport {
+  return &http.Transport{
+    IdleConnTimeout:     timeout,
+    MaxIdleConnsPerHost: maxIdleConnsPerHost,
+    Proxy:               http.ProxyFromEnvironment,
+    Dial: (&net.Dialer{
+      Timeout:   timeout,
+      KeepAlive: keepAlive,
+    }).Dial,
+  }
+}
+
+// NewHTTP returns a new Client from the provided config.
+func NewHTTP(
+  timeout time.Duration,
+  maxIdleConnsPerHost int,
+  keepAlive time.Duration,
+) *http.Client {
+  tr := NewHTTPTransport(
+    timeout,
+    maxIdleConnsPerHost,
+    keepAlive,
+  )
+
+  return &http.Client{
+    Timeout:   timeout,
+    Transport: tr,
+  }
+}
+
+// NewRPC creates a new Solana JSON RPC client.
+func NewRPC(rpcEndpoint string) *rpc.Client {
+  var (
+    defaultMaxIdleConnsPerHost = 10
+    defaultTimeout             = 25 * time.Second
+    defaultKeepAlive           = 180 * time.Second
+  )
+  opts := &jsonrpc.RPCClientOpts{
+    HTTPClient: NewHTTP(
+      defaultTimeout,
+      defaultMaxIdleConnsPerHost,
+      defaultKeepAlive,
+    ),
+  }
+  rpcClient := jsonrpc.NewClientWithOpts(rpcEndpoint, opts)
+  return rpc.NewWithCustomRPCClient(rpcClient)
+}
 ```
 
 ## Examples
@@ -190,7 +431,7 @@ func main() {
   out, err := client.RequestAirdrop(
     context.TODO(),
     account.PublicKey(),
-    solana.LAMPORTS_PER_SOL*5,
+    solana.LAMPORTS_PER_SOL*1,
     rpc.CommitmentFinalized,
   )
   if err != nil {
@@ -200,10 +441,10 @@ func main() {
 }
 ```
 
-### Load/parse private and private keys
+### Load/parse private and public keys
 
 ```go
-{ 
+{
   // Load private key from a json file generated with
   // $ solana-keygen new --outfile=standard.solana-keygen.json
   privateKey, err := solana.PrivateKeyFromSolanaKeygenFile("/path/to/standard.solana-keygen.json")
@@ -217,7 +458,7 @@ func main() {
   fmt.Println("public key:", publicKey.String())
 }
 
-{ 
+{
   // Load private key from base58:
   {
     privateKey, err := solana.PrivateKeyFromBase58("66cDvko73yAf8LYvFMM3r8vF5vJtkk7JKMgEKwkmBC86oHdq41C7i1a2vS3zE1yCcdLLk6VUatUb32ZzVjSBXtRs")
@@ -318,7 +559,7 @@ func main() {
     out, err := rpcClient.RequestAirdrop(
       context.TODO(),
       accountFrom.PublicKey(),
-      solana.LAMPORTS_PER_SOL*5,
+      solana.LAMPORTS_PER_SOL*1,
       rpc.CommitmentFinalized,
     )
     if err != nil {
@@ -405,18 +646,28 @@ func main() {
   - [GetBlocksWithLimit](#index--rpc--getblockswithlimit)
   - [GetClusterNodes](#index--rpc--getclusternodes)
   - [GetConfirmedBlock](#index--rpc--getconfirmedblock)
+    - **DEPRECATED: Please use [GetBlock](#index--rpc--getblock) instead** (This method is expected to be removed in **solana-core v2.0**)
   - [GetConfirmedBlocks](#index--rpc--getconfirmedblocks)
+    - **DEPRECATED: Please use [GetBlocks](#index--rpc--getblocks) instead** (This method is expected to be removed in **solana-core v2.0**)
   - [GetConfirmedBlocksWithLimit](#index--rpc--getconfirmedblockswithlimit)
+    - **DEPRECATED: Please use [GetBlocksWithLimit](#index--rpc--getblockswithlimit) instead** (This method is expected to be removed in **solana-core v2.0**)
   - [GetConfirmedSignaturesForAddress2](#index--rpc--getconfirmedsignaturesforaddress2)
+    - **DEPRECATED: Please use [GetSignaturesForAddress](#index--rpc--getsignaturesforaddress) instead** (This method is expected to be removed in **solana-core v2.0**)
   - [GetConfirmedTransaction](#index--rpc--getconfirmedtransaction)
+    - **DEPRECATED: Please use [GetTransaction](#index--rpc--gettransaction) instead** (This method is expected to be removed in **solana-core v2.0**)
   - [GetEpochInfo](#index--rpc--getepochinfo)
   - [GetEpochSchedule](#index--rpc--getepochschedule)
   - [GetFeeCalculatorForBlockhash](#index--rpc--getfeecalculatorforblockhash)
-  - [GetFeeRateGovernor](#index--rpc--getfeerategovernor)
+    - **DEPRECATED: Please use [IsBlockhashValid](#index--rpc--isblockhashvalid) or [GetFeeForMessage](#index--rpc--getfeeformessage) instead** (This method is expected to be removed in **solana-core v2.0**)
+  - [GetFeeRateGovernor](#index--rpc--getfeerategovernor) **DEPRECATED**
   - [GetFees](#index--rpc--getfees)
+    - **DEPRECATED: Please use [GetFeeForMessage](#index--rpc--getfeeformessage) instead** (This method is expected to be removed in **solana-core v2.0**)
+  - [GetFeeForMessage](#index--rpc--getfeeformessage)
   - [GetFirstAvailableBlock](#index--rpc--getfirstavailableblock)
   - [GetGenesisHash](#index--rpc--getgenesishash)
   - [GetHealth](#index--rpc--gethealth)
+  - [GetHighestSnapshotSlot](#index--rpc--gethighestsnapshotslot)
+  - [GetLatestBlockhash](#index--rpc--getlatestblockhash)
   - [GetIdentity](#index--rpc--getidentity)
   - [GetInflationGovernor](#index--rpc--getinflationgovernor)
   - [GetInflationRate](#index--rpc--getinflationrate)
@@ -429,6 +680,8 @@ func main() {
   - [GetMultipleAccounts](#index--rpc--getmultipleaccounts)
   - [GetProgramAccounts](#index--rpc--getprogramaccounts)
   - [GetRecentBlockhash](#index--rpc--getrecentblockhash)
+    - To be used with **solana v1.8**
+    - For solana v1.9 or newer: **DEPRECATED: Please use [GetLatestBlockhash](#index--rpc--getlatestblockhash) instead** (This method is expected to be removed in **solana-core v2.0**)
   - [GetRecentPerformanceSamples](#index--rpc--getrecentperformancesamples)
   - [GetSignatureStatuses](#index--rpc--getsignaturestatuses)
   - [GetSignaturesForAddress](#index--rpc--getsignaturesforaddress)
@@ -436,6 +689,7 @@ func main() {
   - [GetSlotLeader](#index--rpc--getslotleader)
   - [GetSlotLeaders](#index--rpc--getslotleaders)
   - [GetSnapshotSlot](#index--rpc--getsnapshotslot)
+    - **DEPRECATED: Please use [GetHighestSnapshotSlot](#index--rpc--gethighestsnapshotslot) instead** (This method is expected to be removed in **solana-core v2.0**)
   - [GetStakeActivation](#index--rpc--getstakeactivation)
   - [GetSupply](#index--rpc--getsupply)
   - [GetTokenAccountBalance](#index--rpc--gettokenaccountbalance)
@@ -447,6 +701,7 @@ func main() {
   - [GetTransactionCount](#index--rpc--gettransactioncount)
   - [GetVersion](#index--rpc--getversion)
   - [GetVoteAccounts](#index--rpc--getvoteaccounts)
+  - [IsBlockhashValid](#index--rpc--isblockhashvalid)
   - [MinimumLedgerSlot](#index--rpc--minimumledgerslot)
   - [RequestAirdrop](#index--rpc--requestairdrop)
   - [SendTransaction](#index--rpc--sendtransaction)
@@ -495,7 +750,7 @@ func main() {
 
     var mint token.Mint
     // Account{}.Data.GetBinary() returns the *decoded* binary data
-    // regardless the original encoding (it can handle them all). 
+    // regardless the original encoding (it can handle them all).
     err = bin.NewDecoder(resp.Value.Data.GetBinary()).Decode(&mint)
     if err != nil {
       panic(err)
@@ -1256,6 +1511,35 @@ func main() {
 }
 ```
 
+
+#### [index](#contents) > [RPC](#rpc-methods) > GetFeeForMessage
+
+```go
+package main
+
+import (
+  "context"
+
+  "github.com/davecgh/go-spew/spew"
+  "github.com/gagliardetto/solana-go/rpc"
+)
+
+func main() {
+  endpoint := rpc.TestNet_RPC
+  client := rpc.New(endpoint)
+
+  example, err := client.GetFeeForMessage(
+    context.Background(),
+    "AQABAgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEBAQAA",
+    rpc.CommitmentProcessed,
+  )
+  if err != nil {
+    panic(err)
+  }
+  spew.Dump(example)
+}
+```
+
 #### [index](#contents) > [RPC](#rpc-methods) > GetFirstAvailableBlock
 
 ```go
@@ -1332,6 +1616,61 @@ func main() {
   }
   spew.Dump(out)
   spew.Dump(out == rpc.HealthOk)
+}
+```
+
+#### [index](#contents) > [RPC](#rpc-methods) > GetHighestSnapshotSlot
+
+```go
+package main
+
+import (
+  "context"
+
+  "github.com/davecgh/go-spew/spew"
+  "github.com/gagliardetto/solana-go/rpc"
+)
+
+func main() {
+  endpoint := rpc.TestNet_RPC
+  client := rpc.New(endpoint)
+
+  example, err := client.GetHighestSnapshotSlot(
+    context.Background(),
+  )
+  if err != nil {
+    panic(err)
+  }
+  spew.Dump(example)
+}
+```
+
+#### [index](#contents) > [RPC](#rpc-methods) > GetLatestBlockhash
+
+NEW: This method is only available in solana-core v1.9 or newer. Please use getRecentBlockhash for solana-core v1.8
+
+```go
+package main
+
+import (
+  "context"
+
+  "github.com/davecgh/go-spew/spew"
+  "github.com/gagliardetto/solana-go/rpc"
+)
+
+func main() {
+  endpoint := rpc.TestNet_RPC
+  client := rpc.New(endpoint)
+
+  example, err := client.GetLatestBlockhash(
+    context.Background(),
+    rpc.CommitmentFinalized,
+  )
+  if err != nil {
+    panic(err)
+  }
+  spew.Dump(example)
 }
 ```
 
@@ -2025,7 +2364,9 @@ import (
   "context"
 
   "github.com/davecgh/go-spew/spew"
+  bin "github.com/gagliardetto/binary"
   "github.com/gagliardetto/solana-go"
+  "github.com/gagliardetto/solana-go/programs/token"
   "github.com/gagliardetto/solana-go/rpc"
 )
 
@@ -2038,15 +2379,34 @@ func main() {
     context.TODO(),
     pubKey,
     &rpc.GetTokenAccountsConfig{
-      Mint: solana.MustPublicKeyFromBase58("So11111111111111111111111111111111111111112"),
+      Mint: solana.WrappedSol.ToPointer(),
     },
-    nil,
+    &rpc.GetTokenAccountsOpts{
+      Encoding: solana.EncodingBase64Zstd,
+    },
   )
   if err != nil {
     panic(err)
   }
   spew.Dump(out)
+
+  {
+    tokenAccounts := make([]token.Account, 0)
+    for _, rawAccount := range out.Value {
+      var tokAcc token.Account
+
+      data := rawAccount.Account.Data.GetBinary()
+      dec := bin.NewBinDecoder(data)
+      err := dec.Decode(&tokAcc)
+      if err != nil {
+        panic(err)
+      }
+      tokenAccounts = append(tokenAccounts, tokAcc)
+    }
+    spew.Dump(tokenAccounts)
+  }
 }
+
 ```
 
 #### [index](#contents) > [RPC](#rpc-methods) > GetTokenLargestAccounts
@@ -2131,46 +2491,6 @@ func main() {
     out, err := client.GetTransaction(
       context.TODO(),
       txSig,
-      nil,
-    )
-    if err != nil {
-      panic(err)
-    }
-    spew.Dump(out)
-    spew.Dump(out.Transaction.GetParsedTransaction())
-  }
-  {
-    out, err := client.GetTransaction(
-      context.TODO(),
-      txSig,
-      &rpc.GetTransactionOpts{
-        Encoding: solana.EncodingJSON,
-      },
-    )
-    if err != nil {
-      panic(err)
-    }
-    spew.Dump(out)
-    spew.Dump(out.Transaction.GetParsedTransaction())
-  }
-  {
-    out, err := client.GetTransaction(
-      context.TODO(),
-      txSig,
-      &rpc.GetTransactionOpts{
-        Encoding: solana.EncodingBase58,
-      },
-    )
-    if err != nil {
-      panic(err)
-    }
-    spew.Dump(out)
-    spew.Dump(out.Transaction.GetBinary())
-  }
-  {
-    out, err := client.GetTransaction(
-      context.TODO(),
-      txSig,
       &rpc.GetTransactionOpts{
         Encoding: solana.EncodingBase64,
       },
@@ -2180,6 +2500,24 @@ func main() {
     }
     spew.Dump(out)
     spew.Dump(out.Transaction.GetBinary())
+
+    decodedTx, err := solana.TransactionFromDecoder(bin.NewBinDecoder(out.Transaction.GetBinary()))
+    if err != nil {
+      panic(err)
+    }
+    spew.Dump(decodedTx)
+  }
+  {
+    out, err := client.GetTransaction(
+      context.TODO(),
+      txSig,
+      nil,
+    )
+    if err != nil {
+      panic(err)
+    }
+    spew.Dump(out)
+    spew.Dump(out.Transaction.GetParsedTransaction())
   }
 }
 ```
@@ -2264,6 +2602,39 @@ func main() {
     panic(err)
   }
   spew.Dump(out)
+}
+```
+
+#### [index](#contents) > [RPC](#rpc-methods) > IsBlockhashValid
+
+```go
+package main
+
+import (
+  "context"
+  "fmt"
+  "github.com/davecgh/go-spew/spew"
+  "github.com/gagliardetto/solana-go"
+  "github.com/gagliardetto/solana-go/rpc"
+)
+
+func main() {
+  endpoint := rpc.MainNetBeta_RPC
+  client := rpc.New(endpoint)
+
+  blockHash := solana.MustHashFromBase58("J7rBdM6AecPDEZp8aPq5iPSNKVkU5Q76F3oAV4eW5wsW")
+  out, err := client.IsBlockhashValid(
+    context.TODO(),
+    blockHash,
+    rpc.CommitmentFinalized,
+  )
+  if err != nil {
+    panic(err)
+  }
+  spew.Dump(out)
+  spew.Dump(out.Value) // true or false
+
+  fmt.Println("is blockhash valid:", out.Value)
 }
 ```
 

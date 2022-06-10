@@ -144,12 +144,8 @@ func (p PublicKey) MarshalText() ([]byte, error) {
 	return []byte(base58.Encode(p[:])), nil
 }
 
-func (p *PublicKey) UnmarshalText(data []byte) (err error) {
-	*p, err = PublicKeyFromBase58(string(data))
-	if err != nil {
-		return fmt.Errorf("invalid public key %q: %w", data, err)
-	}
-	return
+func (p *PublicKey) UnmarshalText(data []byte) error {
+	return p.Set(string(data))
 }
 
 func (p PublicKey) MarshalJSON() ([]byte, error) {
@@ -182,6 +178,11 @@ func (p PublicKey) Bytes() []byte {
 	return []byte(p[:])
 }
 
+// Check if a `Pubkey` is on the ed25519 curve.
+func (p PublicKey) IsOnCurve() bool {
+	return IsOnCurve(p[:])
+}
+
 var zeroPublicKey = PublicKey{}
 
 // IsZero returns whether the public key is zero.
@@ -190,8 +191,35 @@ func (p PublicKey) IsZero() bool {
 	return p == zeroPublicKey
 }
 
+func (p *PublicKey) Set(s string) (err error) {
+	*p, err = PublicKeyFromBase58(s)
+	if err != nil {
+		return fmt.Errorf("invalid public key %s: %w", s, err)
+	}
+	return
+}
+
 func (p PublicKey) String() string {
 	return base58.Encode(p[:])
+}
+
+// Short returns a shortened pubkey string,
+// only including the first n chars, ellipsis, and the last n characters.
+// NOTE: this is ONLY for visual representation for humans,
+// and cannot be used for anything else.
+func (p PublicKey) Short(n int) string {
+	return formatShortPubkey(n, p)
+}
+
+func formatShortPubkey(n int, pubkey PublicKey) string {
+	str := pubkey.String()
+	if n > (len(str)/2)-1 {
+		n = (len(str) / 2) - 1
+	}
+	if n < 2 {
+		n = 2
+	}
+	return str[:n] + "..." + str[len(str)-n:]
 }
 
 type PublicKeySlice []PublicKey
@@ -207,8 +235,8 @@ func (slice *PublicKeySlice) UniqueAppend(pubkey PublicKey) bool {
 	return false
 }
 
-func (slice *PublicKeySlice) Append(pubkey PublicKey) {
-	*slice = append(*slice, pubkey)
+func (slice *PublicKeySlice) Append(pubkeys ...PublicKey) {
+	*slice = append(*slice, pubkeys...)
 }
 
 func (slice PublicKeySlice) Has(pubkey PublicKey) bool {
@@ -218,6 +246,52 @@ func (slice PublicKeySlice) Has(pubkey PublicKey) bool {
 		}
 	}
 	return false
+}
+
+// Split splits the slice into chunks of the specified size.
+func (slice PublicKeySlice) Split(chunkSize int) []PublicKeySlice {
+	divided := make([]PublicKeySlice, 0)
+	if len(slice) == 0 || chunkSize < 1 {
+		return divided
+	}
+	if len(slice) == 1 {
+		return append(divided, slice)
+	}
+
+	for i := 0; i < len(slice); i += chunkSize {
+		end := i + chunkSize
+
+		if end > len(slice) {
+			end = len(slice)
+		}
+
+		divided = append(divided, slice[i:end])
+	}
+
+	return divided
+}
+
+// GetAddedRemovedPubkeys accepts two slices of pubkeys (`previous` and `next`), and returns
+// two slices:
+// - `added` is the slice of pubkeys that are present in `next` but NOT present in `previous`.
+// - `removed` is the slice of pubkeys that are present in `previous` but are NOT present in `next`.
+func GetAddedRemovedPubkeys(previous PublicKeySlice, next PublicKeySlice) (added PublicKeySlice, removed PublicKeySlice) {
+	added = make(PublicKeySlice, 0)
+	removed = make(PublicKeySlice, 0)
+
+	for _, prev := range previous {
+		if !next.Has(prev) {
+			removed = append(removed, prev)
+		}
+	}
+
+	for _, nx := range next {
+		if !previous.Has(nx) {
+			added = append(added, nx)
+		}
+	}
+
+	return
 }
 
 var nativeProgramIDs = PublicKeySlice{
@@ -253,6 +327,9 @@ const (
 	MaxSeedLength = 32
 	// Maximum number of seeds.
 	MaxSeeds = 16
+	/// Number of bytes in a signature.
+	SignatureLength = 64
+
 	// // Maximum string length of a base58 encoded pubkey.
 	// MaxBase58Length = 44
 )
@@ -281,21 +358,19 @@ func CreateWithSeed(base PublicKey, seed string, owner PublicKey) (PublicKey, er
 
 const PDA_MARKER = "ProgramDerivedAddress"
 
+var ErrMaxSeedLengthExceeded = errors.New("Max seed length exceeded")
+
 // Create a program address.
 // Ported from https://github.com/solana-labs/solana/blob/216983c50e0a618facc39aa07472ba6d23f1b33a/sdk/program/src/pubkey.rs#L204
 func CreateProgramAddress(seeds [][]byte, programID PublicKey) (PublicKey, error) {
 	if len(seeds) > MaxSeeds {
-		return PublicKey{}, errors.New("Max seed length exceeded")
+		return PublicKey{}, ErrMaxSeedLengthExceeded
 	}
 
 	for _, seed := range seeds {
 		if len(seed) > MaxSeedLength {
-			return PublicKey{}, errors.New("Max seed length exceeded")
+			return PublicKey{}, ErrMaxSeedLengthExceeded
 		}
-	}
-
-	if isNativeProgramID(programID) {
-		return PublicKey{}, fmt.Errorf("illegal owner: %s is a native program", programID)
 	}
 
 	buf := []byte{}
@@ -307,13 +382,18 @@ func CreateProgramAddress(seeds [][]byte, programID PublicKey) (PublicKey, error
 	buf = append(buf, []byte(PDA_MARKER)...)
 	hash := sha256.Sum256(buf)
 
-	_, err := new(edwards25519.Point).SetBytes(hash[:])
-	isOnCurve := err == nil
-	if isOnCurve {
+	if IsOnCurve(hash[:]) {
 		return PublicKey{}, errors.New("invalid seeds; address must fall off the curve")
 	}
 
 	return PublicKeyFromBytes(hash[:]), nil
+}
+
+// Check if the provided `b` is on the ed25519 curve.
+func IsOnCurve(b []byte) bool {
+	_, err := new(edwards25519.Point).SetBytes(b)
+	isOnCurve := err == nil
+	return isOnCurve
 }
 
 // Find a valid program address and its corresponding bump seed.

@@ -30,7 +30,6 @@ func (cl *Client) GetAccountInfo(ctx context.Context, account solana.PublicKey) 
 		ctx,
 		account,
 		&GetAccountInfoOpts{
-			Encoding:   solana.EncodingBase64,
 			Commitment: "",
 			DataSlice:  nil,
 		},
@@ -93,7 +92,10 @@ func (cl *Client) GetAccountInfoWithOpts(
 	opts *GetAccountInfoOpts,
 ) (out *GetAccountInfoResult, err error) {
 
-	obj := M{}
+	obj := M{
+		// default encoding:
+		"encoding": solana.EncodingBase64,
+	}
 
 	if opts != nil {
 		if opts.Encoding != "" {
@@ -121,6 +123,9 @@ func (cl *Client) GetAccountInfoWithOpts(
 	err = cl.rpcClient.CallForInto(ctx, &out, "getAccountInfo", params)
 	if err != nil {
 		return nil, err
+	}
+	if out == nil {
+		return nil, errors.New("expected a value, got null result")
 	}
 	if out.Value == nil {
 		return nil, ErrNotFound

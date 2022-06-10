@@ -18,8 +18,10 @@
 package solana
 
 import (
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"flag"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -158,19 +160,171 @@ func TestPublicKey_MarshalText(t *testing.T) {
 	)
 }
 
+func TestPublicKey_Flag(t *testing.T) {
+	flagSet := flag.NewFlagSet("", flag.ContinueOnError)
+	var key PublicKey
+	flagSet.Var(&key, "account", "Public key")
+	err := flagSet.Parse([]string{"--account", "7cVfgArCheMR6Cs4t6vz5rfnqd56vZq4ndaBrY5xkxXy"})
+	require.NoError(t, err)
+	assert.Equal(t, PublicKey{
+		0x62, 0x3d, 0xdd, 0x11, 0x7e, 0x7c, 0xc5, 0x62,
+		0xf6, 0x63, 0x15, 0x05, 0x25, 0x8c, 0xd1, 0xdc,
+		0xee, 0x81, 0x94, 0x9f, 0x8a, 0xfd, 0x1e, 0xa2,
+		0x94, 0xdc, 0x47, 0xbe, 0x6e, 0xcf, 0xf3, 0xa8,
+	}, key)
+}
+
 func TestPublicKeySlice(t *testing.T) {
-	slice := make(PublicKeySlice, 0)
-	require.False(t, slice.Has(BPFLoaderProgramID))
+	{
+		slice := make(PublicKeySlice, 0)
+		require.False(t, slice.Has(BPFLoaderProgramID))
 
-	slice.Append(BPFLoaderProgramID)
-	require.True(t, slice.Has(BPFLoaderProgramID))
-	require.Len(t, slice, 1)
+		slice.Append(BPFLoaderProgramID)
+		require.True(t, slice.Has(BPFLoaderProgramID))
+		require.Len(t, slice, 1)
 
-	slice.UniqueAppend(BPFLoaderProgramID)
-	require.Len(t, slice, 1)
-	slice.Append(ConfigProgramID)
-	require.Len(t, slice, 2)
-	require.True(t, slice.Has(ConfigProgramID))
+		slice.UniqueAppend(BPFLoaderProgramID)
+		require.Len(t, slice, 1)
+		slice.Append(ConfigProgramID)
+		require.Len(t, slice, 2)
+		require.True(t, slice.Has(ConfigProgramID))
+	}
+
+	{
+		slice := make(PublicKeySlice, 0)
+		{
+			require.Equal(t, []PublicKeySlice{}, slice.Split(1))
+		}
+		slice.Append(
+			SysVarRentPubkey,
+			SysVarRewardsPubkey,
+		)
+		{
+			require.Equal(t,
+				[]PublicKeySlice{},
+				slice.Split(0),
+			)
+			require.Equal(t,
+				[]PublicKeySlice{},
+				slice.Split(-333),
+			)
+		}
+		{
+			require.Equal(t,
+				[]PublicKeySlice{
+					{SysVarRentPubkey},
+					{SysVarRewardsPubkey},
+				},
+				slice.Split(1),
+			)
+		}
+		slice.Append(
+			BPFLoaderProgramID,
+			BPFLoaderDeprecatedProgramID,
+			FeatureProgramID,
+			ConfigProgramID,
+			StakeProgramID,
+			VoteProgramID,
+			SystemProgramID,
+		)
+		{
+			require.Equal(t,
+				[]PublicKeySlice{
+					{SysVarRentPubkey},
+					{SysVarRewardsPubkey},
+					{BPFLoaderProgramID},
+					{BPFLoaderDeprecatedProgramID},
+					{FeatureProgramID},
+					{ConfigProgramID},
+					{StakeProgramID},
+					{VoteProgramID},
+					{SystemProgramID},
+				},
+				slice.Split(1),
+			)
+		}
+		{
+			require.Equal(t,
+				[]PublicKeySlice{
+					{SysVarRentPubkey, SysVarRewardsPubkey},
+					{BPFLoaderProgramID, BPFLoaderDeprecatedProgramID},
+					{FeatureProgramID, ConfigProgramID},
+					{StakeProgramID, VoteProgramID},
+					{SystemProgramID},
+				},
+				slice.Split(2),
+			)
+		}
+	}
+}
+
+func TestGetAddedRemovedPubkeys(t *testing.T) {
+	{
+		previous := PublicKeySlice{}
+		next := PublicKeySlice{BPFLoaderProgramID}
+
+		added, removed := GetAddedRemovedPubkeys(previous, next)
+		require.Equal(t,
+			PublicKeySlice{BPFLoaderProgramID},
+			added,
+		)
+		require.Equal(t,
+			PublicKeySlice{},
+			removed,
+		)
+	}
+	{
+		previous := PublicKeySlice{
+			SysVarClockPubkey,
+			SysVarEpochSchedulePubkey,
+			SysVarFeesPubkey,
+			SysVarInstructionsPubkey,
+			SysVarRecentBlockHashesPubkey,
+		}
+		next := PublicKeySlice{
+			SysVarClockPubkey,
+			SysVarEpochSchedulePubkey,
+			SysVarFeesPubkey,
+			SysVarInstructionsPubkey,
+			SysVarRecentBlockHashesPubkey,
+		}
+
+		added, removed := GetAddedRemovedPubkeys(previous, next)
+		require.Equal(t,
+			PublicKeySlice{},
+			added,
+		)
+		require.Equal(t,
+			PublicKeySlice{},
+			removed,
+		)
+	}
+	{
+		previous := PublicKeySlice{
+			SysVarClockPubkey,
+			SysVarEpochSchedulePubkey,
+			SysVarFeesPubkey,
+			SysVarInstructionsPubkey,
+			SysVarRecentBlockHashesPubkey,
+		}
+		next := PublicKeySlice{
+			SysVarEpochSchedulePubkey,
+			SysVarFeesPubkey,
+			SysVarInstructionsPubkey,
+			SysVarRecentBlockHashesPubkey,
+			ConfigProgramID,
+		}
+
+		added, removed := GetAddedRemovedPubkeys(previous, next)
+		require.Equal(t,
+			PublicKeySlice{ConfigProgramID},
+			added,
+		)
+		require.Equal(t,
+			PublicKeySlice{SysVarClockPubkey},
+			removed,
+		)
+	}
 }
 
 func TestIsNativeProgramID(t *testing.T) {
@@ -185,7 +339,8 @@ func TestCreateWithSeed(t *testing.T) {
 	}
 }
 
-func TestCreateProgramAddress(t *testing.T) {
+func TestCreateProgramAddressFromRust(t *testing.T) {
+	// Ported from https://github.com/solana-labs/solana/blob/f32216588dfdbc7a7160c26331ce657a90f95ae7/sdk/program/src/pubkey.rs#L636
 	program_id := MustPublicKeyFromBase58("BPFLoaderUpgradeab1e11111111111111111111111")
 	public_key := MustPublicKeyFromBase58("SeedPubey1111111111111111111111111111111111")
 
@@ -232,6 +387,129 @@ func TestCreateProgramAddress(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, got.Equals(MustPublicKeyFromBase58("976ymqVnfE32QFe6NfGDctSvVa36LWnvYxhU6G2232YL")))
 	}
+}
+
+func TestCreateProgramAddressFromTypescript(t *testing.T) {
+	t.Run(
+		"createProgramAddress",
+		// Ported from https://github.com/solana-labs/solana-web3.js/blob/168d5e088edd48f9f0c1a877e888592ca4cfdf38/test/publickey.test.ts#L113
+		func(t *testing.T) {
+			program_id := MustPublicKeyFromBase58("BPFLoader1111111111111111111111111111111111")
+			public_key := MustPublicKeyFromBase58("SeedPubey1111111111111111111111111111111111")
+
+			{
+				programAddress, err := CreateProgramAddress([][]byte{
+					[]byte(""),
+					{1},
+				},
+					program_id,
+				)
+				require.NoError(t, err)
+				require.True(t, programAddress.Equals(MustPublicKeyFromBase58("3gF2KMe9KiC6FNVBmfg9i267aMPvK37FewCip4eGBFcT")))
+			}
+			{
+				programAddress, err := CreateProgramAddress([][]byte{
+					[]byte("☉"),
+				},
+					program_id,
+				)
+				require.NoError(t, err)
+				require.True(t, programAddress.Equals(MustPublicKeyFromBase58("7ytmC1nT1xY4RfxCV2ZgyA7UakC93do5ZdyhdF3EtPj7")))
+			}
+			{
+				programAddress, err := CreateProgramAddress([][]byte{
+					[]byte("Talking"),
+					[]byte("Squirrels"),
+				},
+					program_id,
+				)
+				require.NoError(t, err)
+				require.True(t, programAddress.Equals(MustPublicKeyFromBase58("HwRVBufQ4haG5XSgpspwKtNd3PC9GM9m1196uJW36vds")))
+			}
+			{
+				programAddress, err := CreateProgramAddress([][]byte{
+					public_key[:],
+				},
+					program_id,
+				)
+				require.NoError(t, err)
+				require.True(t, programAddress.Equals(MustPublicKeyFromBase58("GUs5qLUfsEHkcMB9T38vjr18ypEhRuNWiePW2LoK4E3K")))
+
+				{
+					programAddress2, err := CreateProgramAddress([][]byte{
+						[]byte("Talking"),
+					},
+						program_id,
+					)
+					require.NoError(t, err)
+					require.False(t, programAddress.Equals(programAddress2))
+				}
+			}
+			{
+				_, err := CreateProgramAddress([][]byte{
+					make([]byte, MaxSeedLength+1),
+				},
+					program_id,
+				)
+				require.EqualError(t, err, ErrMaxSeedLengthExceeded.Error())
+			}
+			{
+				bn := make([]byte, 8)
+				binary.LittleEndian.PutUint64(bn, 2)
+				programAddress, err := CreateProgramAddress([][]byte{
+					MustPublicKeyFromBase58("H4snTKK9adiU15gP22ErfZYtro3aqR9BTMXiH3AwiUTQ").Bytes(),
+					bn,
+				},
+					MustPublicKeyFromBase58("4ckmDgGdxQoPDLUkDT3vHgSAkzA3QRdNq5ywwY4sUSJn"),
+				)
+				require.NoError(t, err)
+				require.True(t, programAddress.Equals(MustPublicKeyFromBase58("12rqwuEgBYiGhBrDJStCiqEtzQpTTiZbh7teNVLuYcFA")))
+			}
+		},
+	)
+
+	t.Run(
+		"findProgramAddress",
+		// Ported from https://github.com/solana-labs/solana-web3.js/blob/168d5e088edd48f9f0c1a877e888592ca4cfdf38/test/publickey.test.ts#L194
+		func(t *testing.T) {
+			programId := MustPublicKeyFromBase58("BPFLoader1111111111111111111111111111111111")
+
+			programAddress, nonce, err := FindProgramAddress(
+				[][]byte{
+					[]byte(""),
+				},
+				programId,
+			)
+			require.NoError(t, err)
+
+			{
+				got, err := CreateProgramAddress([][]byte{
+					[]byte(""),
+					{nonce},
+				},
+					programId,
+				)
+				require.NoError(t, err)
+				require.True(t, programAddress.Equals(got))
+			}
+		},
+	)
+
+	t.Run(
+		"isOnCurve",
+		// Ported from https://github.com/solana-labs/solana-web3.js/blob/168d5e088edd48f9f0c1a877e888592ca4cfdf38/test/publickey.test.ts#L212
+		func(t *testing.T) {
+			onCurve := NewWallet().PublicKey()
+			require.True(t, onCurve.IsOnCurve())
+
+			// A program address, yanked from one of the above tests. This is a pretty
+			// poor test vector since it was created by the same code it is testing.
+			// Unfortunately, I've been unable to find a golden negative example input
+			// for curve25519 point decompression :/
+			offCurve := MustPublicKeyFromBase58("12rqwuEgBYiGhBrDJStCiqEtzQpTTiZbh7teNVLuYcFA")
+			require.False(t, offCurve.IsOnCurve())
+		},
+	)
 }
 
 // https://github.com/solana-labs/solana/blob/216983c50e0a618facc39aa07472ba6d23f1b33a/sdk/program/src/pubkey.rs#L590

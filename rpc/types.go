@@ -18,9 +18,11 @@
 package rpc
 
 import (
+	"encoding/base64"
 	stdjson "encoding/json"
 	"fmt"
 
+	bin "github.com/gagliardetto/binary"
 	"github.com/gagliardetto/solana-go"
 )
 
@@ -57,11 +59,11 @@ type GetConfirmedBlockResult struct {
 	// could be zeroes if ledger was clean-up and this is unavailable
 	PreviousBlockhash solana.Hash `json:"previousBlockhash"`
 
-	ParentSlot   uint64                `json:"parentSlot"`
-	Transactions []TransactionWithMeta `json:"transactions"`
-	Signatures   []solana.Signature    `json:"signatures"`
-	Rewards      []BlockReward         `json:"rewards"`
-	BlockTime    *uint64               `json:"blockTime,omitempty"`
+	ParentSlot   uint64                  `json:"parentSlot"`
+	Transactions []TransactionWithMeta   `json:"transactions"`
+	Signatures   []solana.Signature      `json:"signatures"`
+	Rewards      []BlockReward           `json:"rewards"`
+	BlockTime    *solana.UnixTimeSeconds `json:"blockTime,omitempty"`
 }
 
 type BlockReward struct {
@@ -92,9 +94,26 @@ const (
 )
 
 type TransactionWithMeta struct {
+	Transaction *DataBytesOrJSON `json:"transaction"`
 	// Transaction status metadata object
-	Meta        *TransactionMeta    `json:"meta,omitempty"`
-	Transaction *solana.Transaction `json:"transaction"`
+	Meta *TransactionMeta `json:"meta,omitempty"`
+}
+
+func (twm TransactionWithMeta) MustGetTransaction() *solana.Transaction {
+	tx, err := twm.GetTransaction()
+	if err != nil {
+		panic(err)
+	}
+	return tx
+}
+
+func (twm TransactionWithMeta) GetTransaction() (*solana.Transaction, error) {
+	tx := new(solana.Transaction)
+	err := tx.UnmarshalWithDecoder(bin.NewBinDecoder(twm.Transaction.GetBinary()))
+	if err != nil {
+		return nil, err
+	}
+	return tx, nil
 }
 
 type TransactionParsed struct {
@@ -105,6 +124,9 @@ type TransactionParsed struct {
 type TokenBalance struct {
 	// Index of the account in which the token balance is provided for.
 	AccountIndex uint16 `json:"accountIndex"`
+
+	// Pubkey of token balance's owner.
+	Owner *solana.PublicKey `json:"owner,omitempty"`
 
 	// Pubkey of the token's mint.
 	Mint          solana.PublicKey `json:"mint"`
@@ -142,7 +164,7 @@ type TransactionMeta struct {
 
 	// List of inner instructions or omitted if inner instruction recording
 	// was not yet enabled during this transaction
-	InnerInstructions []InnerInstruction `json:"innerInstructions,omitempty"`
+	InnerInstructions []InnerInstruction `json:"innerInstructions"`
 
 	// List of token balances from before the transaction was processed
 	// or omitted if token balance recording was not yet enabled during this transaction
@@ -159,7 +181,7 @@ type TransactionMeta struct {
 	// DEPRECATED: Transaction status.
 	Status DeprecatedTransactionMetaStatus `json:"status"`
 
-	Rewards []BlockReward `json:"rewards,omitempty"`
+	Rewards []BlockReward `json:"rewards"`
 }
 
 type InnerInstruction struct {
@@ -200,6 +222,11 @@ type GetAccountInfoResult struct {
 	Value *Account `json:"value"`
 }
 
+type IsValidBlockhashResult struct {
+	RPCContext
+	Value bool `json:"value"` // True if the blockhash is still valid.
+}
+
 type Account struct {
 	// Number of lamports assigned to this account
 	Lamports uint64 `json:"lamports"`
@@ -221,6 +248,20 @@ type DataBytesOrJSON struct {
 	rawDataEncoding solana.EncodingType
 	asDecodedBinary solana.Data
 	asJSON          stdjson.RawMessage
+}
+
+func DataBytesOrJSONFromBase64(stringBase64 string) (*DataBytesOrJSON, error) {
+	decoded, err := base64.StdEncoding.DecodeString(stringBase64)
+	if err != nil {
+		return nil, err
+	}
+	return &DataBytesOrJSON{
+		rawDataEncoding: solana.EncodingBase64,
+		asDecodedBinary: solana.Data{
+			Encoding: solana.EncodingBase64,
+			Content:  decoded,
+		},
+	}, nil
 }
 
 func (dt DataBytesOrJSON) MarshalJSON() ([]byte, error) {
@@ -341,7 +382,7 @@ const (
 	// - This confirmation level also upholds "optimistic confirmation" guarantees in release 1.3 and onwards.
 	CommitmentConfirmed CommitmentType = "confirmed"
 
-	// The node will query its most recent block. Note that the block may not be complete.
+	// The node will query its most recent block. Note that the block may still be skipped by the cluster.
 	CommitmentProcessed CommitmentType = "processed"
 )
 
@@ -379,6 +420,36 @@ type InstructionInfo struct {
 
 func (p *ParsedInstruction) IsParsed() bool {
 	return p.Parsed != nil
+}
+
+type TransactionOpts struct {
+	Encoding            string         `json:"encoding,omitempty"`
+	SkipPreflight       bool           `json:"skipPreflight,omitempty"`
+	PreflightCommitment CommitmentType `json:"preflightCommitment,omitempty"`
+	MaxRetries          *uint          `json:"maxRetries"`
+}
+
+func (opts *TransactionOpts) ToMap() M {
+	obj := M{}
+
+	if opts.Encoding == "" {
+		// default to base64 encoding
+		obj["encoding"] = "base64"
+	} else {
+		obj["encoding"] = opts.Encoding
+	}
+
+	obj["skipPreflight"] = opts.SkipPreflight
+
+	if opts.PreflightCommitment != "" {
+		obj["preflightCommitment"] = opts.PreflightCommitment
+	}
+
+	if opts.MaxRetries != nil {
+		obj["maxRetries"] = *opts.MaxRetries
+	}
+
+	return obj
 }
 
 type M map[string]interface{}

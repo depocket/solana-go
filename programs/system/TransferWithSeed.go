@@ -178,7 +178,7 @@ func (inst TransferWithSeed) MarshalWithEncoder(encoder *ag_binary.Encoder) erro
 	}
 	// Serialize `FromSeed` param:
 	{
-		err := encoder.Encode(*inst.FromSeed)
+		err := encoder.WriteRustString(*inst.FromSeed)
 		if err != nil {
 			return err
 		}
@@ -203,10 +203,11 @@ func (inst *TransferWithSeed) UnmarshalWithDecoder(decoder *ag_binary.Decoder) e
 	}
 	// Deserialize `FromSeed` param:
 	{
-		err := decoder.Decode(&inst.FromSeed)
+		value, err := decoder.ReadRustString()
 		if err != nil {
 			return err
 		}
+		inst.FromSeed = &value
 	}
 	// Deserialize `FromOwner` param:
 	{
